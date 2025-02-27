@@ -1,0 +1,28 @@
+.ai-transcript {
+  width: 300px;
+  min-height: 100vh;
+  background: white;
+  border-left: 1px solid #eee;
+  padding: 1.5rem;
+}
+
+h3 {
+  font-size: 1.2rem;
+  color: #333;
+  margin: 0 0 1rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #eee;
+}
+
+.transcript-content {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.message {
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+  color: #2c3e50;
+} 
