@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 const functionDescriptions = `
 Call this function when a user asks for a color palette.
 Call pixel_art function when user asks for pixel art or simple drawings.
+Call show_arrow function when user asks to show or display an arrow in any direction.
+Call find_similar_people function when user wants to play a game finding people matching specific criteria.
 `;
 
 const sessionUpdate = {
@@ -63,6 +65,39 @@ const sessionUpdate = {
             },
           },
           required: ["description", "pixels", "size"],
+        },
+      },
+      {
+        type: "function",
+        name: "show_arrow",
+        description: "Display an arrow pointing in the specified direction",
+        parameters: {
+          type: "object",
+          strict: true,
+          properties: {
+            direction: {
+              type: "string",
+              enum: ["up", "down", "left", "right"],
+              description: "The direction the arrow should point",
+            }
+          },
+          required: ["direction"],
+        },
+      },
+      {
+        type: "function",
+        name: "find_similar_people",
+        description: "Start a game where users need to find people matching a specific criteria",
+        parameters: {
+          type: "object",
+          strict: true,
+          properties: {
+            query: {
+              type: "string",
+              description: "The search criteria or category of people to find (e.g., 'AI enthusiasts', 'IIT alumni')",
+            }
+          },
+          required: ["query"],
         },
       }
     ],
@@ -173,6 +208,132 @@ function PixelArtOutput({ functionCallOutput }) {
   }
 }
 
+function ArrowOutput({ functionCallOutput }) {
+  try {
+    if (!functionCallOutput?.arguments) {
+      return <div>Invalid arrow data</div>;
+    }
+
+    const { direction } = JSON.parse(functionCallOutput.arguments);
+    
+    const arrowSymbols = {
+      up: '↑',
+      down: '↓',
+      left: '←',
+      right: '→'
+    };
+
+    return (
+      <div className="flex flex-col gap-4 items-center">
+        <p className="text-lg font-semibold">Direction: {direction}</p>
+        <div className="text-8xl font-bold text-orange-400">
+          {arrowSymbols[direction]}
+        </div>
+      </div>
+    );
+  } catch (error) {
+    console.error("Error parsing arrow data:", error);
+    return <div>Error displaying arrow</div>;
+  }
+}
+
+function FindSimilarPeopleGame({ functionCallOutput, sendClientEvent }) {
+  const [timeLeft, setTimeLeft] = useState(10);
+  const [isDone, setIsDone] = useState(false);
+  const [embedding, setEmbedding] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const { query } = JSON.parse(functionCallOutput.arguments);
+
+  // Start both the embedding request and timer immediately
+  useEffect(() => {
+    // Make direct request to OpenAI embeddings API with hardcoded key
+    fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'text-embedding-ada-002',
+        input: query,
+      }),
+    })
+      .then(response => response.json())
+      .then(data => {
+        console.log("OpenAI Embedding Response:", data);
+        if (data.data && data.data[0] && data.data[0].embedding) {
+          setEmbedding(data.data[0].embedding);
+        } else {
+          throw new Error("Invalid embedding response structure");
+        }
+        setIsLoading(false);
+      })
+      .catch(error => {
+        console.error('Error getting embedding:', error);
+        setIsLoading(false);
+      });
+  }, [query]);
+
+  // Timer runs independently
+  useEffect(() => {
+    if (timeLeft > 0) {
+      const timer = setTimeout(() => {
+        setTimeLeft(prev => prev - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (!isDone) {
+      setIsDone(true);
+      sendClientEvent({
+        type: "response.create",
+        response: {
+          instructions: "Ask if they found someone matching the criteria",
+        },
+      });
+    }
+  }, [timeLeft, isDone, sendClientEvent]);
+
+  return (
+    <div className="flex flex-col gap-4 items-center">
+      <div className="text-xl font-semibold text-gray-700 text-center">
+        Find someone who is:
+        <div className="text-orange-500 font-bold mt-2">
+          {query}
+        </div>
+      </div>
+      
+      <div className="text-6xl font-bold text-orange-400 mt-4">
+        {isDone ? "Time's Up!" : timeLeft}
+      </div>
+      
+      {/* Only show embedding after timer is done */}
+      {isDone && (
+        <div className="w-full mt-6 p-4 bg-gray-100 rounded-lg">
+          <h3 className="text-sm font-semibold mb-2">Query Embedding:</h3>
+          {isLoading ? (
+            <div className="text-gray-500">Still generating embedding...</div>
+          ) : embedding ? (
+            <div className="text-xs font-mono overflow-x-auto">
+              <div className="flex flex-wrap gap-1">
+                {embedding.slice(0, 20).map((value, i) => (
+                  <span key={i} className="bg-white px-2 py-1 rounded">
+                    {value.toFixed(4)}
+                  </span>
+                ))}
+                <span className="px-2 py-1">...</span>
+                <div className="w-full mt-2 text-gray-500 text-right">
+                  {embedding.length} dimensions
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-red-500">Failed to generate embedding</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ToolPanel({
   isSessionActive,
   sendClientEvent,
@@ -181,15 +342,16 @@ export default function ToolPanel({
   const [functionAdded, setFunctionAdded] = useState(false);
   const [functionCallOutput, setFunctionCallOutput] = useState(null);
   const [activeFunction, setActiveFunction] = useState(null);
-  const [snakeCommand, setSnakeCommand] = useState(null);
 
   useEffect(() => {
     if (!events || events.length === 0) return;
 
     const firstEvent = events[events.length - 1];
-    if (!functionAdded && firstEvent.type === "session.created") {
-      sendClientEvent(sessionUpdate);
-      setFunctionAdded(true);
+    if (isSessionActive && !functionAdded && firstEvent.type === "session.created") {
+      setTimeout(() => {
+        sendClientEvent(sessionUpdate);
+        setFunctionAdded(true);
+      }, 1000);
     }
 
     const mostRecentEvent = events[0];
@@ -201,26 +363,16 @@ export default function ToolPanel({
         if (output.type === "function_call") {
           setFunctionCallOutput(output);
           setActiveFunction(output.name);
-          
-          setTimeout(() => {
-            sendClientEvent({
-              type: "response.create",
-              response: {
-                instructions: output.name === "create_pixel_art" 
-                  ? "ask for feedback about the pixel art - don't describe it again, just ask if they like it"
-                  : "ask for feedback about the color palette - don't repeat the colors, just ask if they like the colors",
-              },
-            });
-          }, 500);
         }
       });
     }
-  }, [events]);
+  }, [events, isSessionActive]);
 
   useEffect(() => {
     if (!isSessionActive) {
       setFunctionAdded(false);
       setFunctionCallOutput(null);
+      setActiveFunction(null);
     }
   }, [isSessionActive]);
 
@@ -236,14 +388,19 @@ export default function ToolPanel({
               </div>
               {activeFunction === "create_pixel_art" ? (
                 <PixelArtOutput functionCallOutput={functionCallOutput} />
-              ) : activeFunction === "control_snake" ? (
-                <Snake isActive={isSessionActive} command={snakeCommand} />
+              ) : activeFunction === "show_arrow" ? (
+                <ArrowOutput functionCallOutput={functionCallOutput} />
+              ) : activeFunction === "find_similar_people" ? (
+                <FindSimilarPeopleGame 
+                  functionCallOutput={functionCallOutput} 
+                  sendClientEvent={sendClientEvent}
+                />
               ) : (
                 <FunctionCallOutput functionCallOutput={functionCallOutput} />
               )}
             </>
           ) : (
-            <p>Ask for a color palette or pixel art drawing...</p>
+            <p>Ask for a color palette, pixel art, direction arrow, or find similar people...</p>
           )
         ) : (
           <p>Start the session to use these tools...</p>
